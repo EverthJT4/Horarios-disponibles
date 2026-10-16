@@ -5,7 +5,7 @@ service cloud.firestore {
     function isAdmin() {
       return request.auth != null
         && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() == 'TU_CORREO@gmail.com';
+        && request.auth.token.email.lower() == 'everthjt4@gmail.com';
     }
     function okShape() {
       let d = request.resource.data;
