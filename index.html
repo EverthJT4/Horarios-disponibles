@@ -108,6 +108,16 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
 .empty { color: var(--muted); }
 .note { color: var(--muted); font-size: .82rem; line-height: 1.5; }
 @media (max-width: 520px) { h1 { font-size: 1.5rem; } .summary li { grid-template-columns: 1fr; gap: 4px; } }
+.hcell .rec { margin-top: 4px; font-size: .7rem; font-weight: 700; padding: 2px 6px; border-radius: 999px; }
+.hcell .rec.done { background: var(--free-soft); color: var(--free-ink); display: inline-block; }
+.hcell button.rec { border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.hcell button.rec.done { border-color: var(--free); }
+.slot.locked { cursor: not-allowed; background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--line-soft) 6px 7px); }
+.slot.locked:hover { background-color: transparent; }
+.slot.on.locked { background-color: var(--free); opacity: .8; }
+.admin { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: .82rem; }
+.admin button { font-size: .82rem; padding: 5px 10px; }
+.banner { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; color: var(--warn); }
 </style>
 </head>
 <body>
@@ -116,7 +126,7 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
   <header>
     <div>
       <h1>Horas libres</h1>
-      <p class="sub">Toca o arrastra sobre la cuadrícula para marcar tus horas libres. Las horas están en Venezuela (UTC−4) y al lado se ve su equivalente en Nueva York. Cuando termines, toca “Copiar link” y envíalo.</p>
+      <p class="sub" id="sub">Toca o arrastra sobre la cuadrícula para marcar tus horas libres; se guardan solas. Las horas están en Venezuela (UTC−4) y al lado se ve su equivalente en Nueva York. Los días marcados como “Recibido” ya no se pueden cambiar.</p>
     </div>
     <div class="weeknav">
       <button id="prev" type="button" aria-label="Semana anterior">←</button>
@@ -126,17 +136,17 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
     </div>
   </header>
 
+  <div class="banner" id="banner" hidden></div>
+
   <div class="toolbar">
     <div class="left">
       <button id="copyPrev" type="button">Copiar semana anterior</button>
       <button id="clearWeek" type="button">Borrar semana</button>
-      <button id="confirmClear" type="button" hidden>Sí, borrar todo</button>
-      <button id="copyLink" type="button" class="primary">Copiar link</button>
+      <button id="confirmClear" type="button" hidden>Sí, borrar lo no recibido</button>
+      <button id="receiveWeek" type="button" class="primary" hidden>Recibir toda la semana</button>
     </div>
-    <div class="legend"><span><span class="sw"></span>Libre</span><span class="status" id="status"></span></div>
+    <div class="legend"><span><span class="sw"></span>Libre</span><span class="status" id="status">Cargando…</span></div>
   </div>
-
-  <input id="linkBox" type="text" readonly hidden aria-label="Link de la semana">
 
   <div class="gridbox"><div class="grid" id="grid"></div></div>
 
@@ -146,9 +156,19 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
   </section>
 
   <p class="note" id="tzNote"></p>
+  <div class="admin" id="admin"><span id="adminText"></span><button id="signIn" type="button">Entrar como Everth</button><button id="signOut" type="button" hidden>Salir</button></div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
+// ---------- Configuración ----------
+// Pega aquí el objeto firebaseConfig de tu proyecto (Configuración del proyecto → Tus apps → Web).
+const FIREBASE_CONFIG = null;
+// Cuenta de Google que puede marcar días como "Recibido" (debe coincidir con las reglas de Firestore).
+const ADMIN_EMAIL = "";
+
 (() => {
   const START_H = 6, END_H = 24;            // horas mostradas (hora de Caracas)
   const STEP = 60;                          // minutos por casilla
@@ -169,71 +189,97 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
   const addDays = (s, n) => { const d = parse(s); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
   const todayVE = () => iso(new Date(Date.now() + VE_OFFSET * 3600e3));
   const mondayOf = s => { const d = parse(s); const wd = (d.getUTCDay() + 6) % 7; return addDays(s, -wd); };
+  const weekDays = () => [0, 1, 2, 3, 4, 5, 6].map(i => addDays(week, i));
 
   // Instante UTC de una hora de Caracas
   const instant = (date, hhmm) => { const d = parse(date); const [h, m] = hhmm.split(":").map(Number); return new Date(d.getTime() + ((h - VE_OFFSET) * 60 + m) * 60e3); };
-  const nyFmt = new Intl.DateTimeFormat("en-US", { timeZone: NY, hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short" });
+  const nyFmt = new Intl.DateTimeFormat("en-US", { timeZone: NY, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   const nyZoneFmt = new Intl.DateTimeFormat("en-US", { timeZone: NY, timeZoneName: "short" });
-  const nyParts = dt => Object.fromEntries(nyFmt.formatToParts(dt).map(p => [p.type, p.value]));
-  const nyTime = (date, hhmm) => { const p = nyParts(instant(date, hhmm)); return p.hour + ":" + p.minute; };
+  const nyTime = (date, hhmm) => { const p = Object.fromEntries(nyFmt.formatToParts(instant(date, hhmm)).map(x => [x.type, x.value])); return p.hour + ":" + p.minute; };
   const nyZone = date => (nyZoneFmt.formatToParts(instant(date, "12:00")).find(p => p.type === "timeZoneName") || {}).value || "ET";
   const addMin = (hhmm, n) => { const [h, m] = hhmm.split(":").map(Number); const t = h * 60 + m + n; return pad(Math.floor(t / 60)) + ":" + pad(t % 60); };
 
   let week = mondayOf(todayVE());
   let slots = {};             // { "YYYY-MM-DD": ["09:00", ...] }
-  const canWrite = true;
+  let locked = {};            // { "YYYY-MM-DD": true }
+  let db = null, unsub = null, isAdmin = false, online = false;
+  const dirty = new Set();
+  let saveTimer = null;
 
   const setStatus = (t, warn) => { const el = $("status"); el.textContent = t; el.classList.toggle("warn", !!warn); };
   const has = (date, t) => (slots[date] || []).includes(t);
+  const editable = date => online && (isAdmin || !locked[date]);
   const setSlot = (date, t, on) => {
+    if (!editable(date)) return false;
     const list = new Set(slots[date] || []);
     on ? list.add(t) : list.delete(t);
     slots[date] = [...list].sort();
-    if (!slots[date].length) delete slots[date];
+    dirty.add(date);
+    return true;
   };
 
   // ---------- Render ----------
   function renderGrid() {
     const g = $("grid"); g.innerHTML = "";
-    const z = nyZone(addDays(week, 3));
-    const head = (html, cls) => { const c = document.createElement("div"); c.className = "hcell " + (cls || ""); c.innerHTML = html; g.appendChild(c); };
+    const head = (html, cls) => { const c = document.createElement("div"); c.className = "hcell " + (cls || ""); c.innerHTML = html; g.appendChild(c); return c; };
     head('<div class="tz">Vzla<br>UTC−4</div>');
-    head('<div class="tz" style="color:var(--accent)">NY<br>' + z + "</div>");
+    head('<div class="tz" style="color:var(--accent)">NY<br>' + nyZone(addDays(week, 3)) + "</div>");
     const today = todayVE();
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(week, i), pd = parse(d);
-      head('<div class="d">' + DAYS_SHORT[i] + '</div><div class="n">' + pd.getUTCDate() + " " + MONTHS[pd.getUTCMonth()] + "</div>", d === today ? "today" : "");
-    }
-    times.forEach((t, r) => {
-      const half = !t.endsWith(":00");
-      const a = document.createElement("div"); a.className = "time" + (half ? " half" : ""); a.textContent = t; g.appendChild(a);
-      const b = document.createElement("div"); b.className = "time et" + (half ? " half" : ""); b.textContent = nyTime(addDays(week, 3), t); g.appendChild(b);
-      for (let i = 0; i < 7; i++) {
-        const d = addDays(week, i);
+    weekDays().forEach((d, i) => {
+      const pd = parse(d);
+      const c = head('<div class="d">' + DAYS_SHORT[i] + '</div><div class="n">' + pd.getUTCDate() + " " + MONTHS[pd.getUTCMonth()] + "</div>", d === today ? "today" : "");
+      c.dataset.head = d;
+    });
+    times.forEach(t => {
+      const a = document.createElement("div"); a.className = "time"; a.textContent = t; g.appendChild(a);
+      const b = document.createElement("div"); b.className = "time et"; b.textContent = nyTime(addDays(week, 3), t); g.appendChild(b);
+      weekDays().forEach((d, i) => {
         const c = document.createElement("div");
-        c.className = "slot" + (half ? " hour" : "") + (canWrite ? "" : " ro");
-        c.dataset.date = d; c.dataset.time = t; c.tabIndex = canWrite ? 0 : -1;
+        c.className = "slot";
+        c.dataset.date = d; c.dataset.time = t;
         c.setAttribute("role", "button");
         c.setAttribute("aria-label", DAYS[i] + " " + t);
         g.appendChild(c);
-      }
+      });
     });
     paint();
   }
 
   function paint() {
     document.querySelectorAll(".slot").forEach(c => {
-      const on = has(c.dataset.date, c.dataset.time);
+      const d = c.dataset.date, on = has(d, c.dataset.time);
       c.classList.toggle("on", on);
-      c.classList.toggle("end", on && !has(c.dataset.date, addMin(c.dataset.time, STEP)));
+      c.classList.toggle("end", on && !has(d, addMin(c.dataset.time, STEP)));
+      c.classList.toggle("locked", !!locked[d]);
+      c.classList.toggle("ro", !editable(d));
+      c.tabIndex = editable(d) ? 0 : -1;
       c.setAttribute("aria-pressed", on);
     });
+    document.querySelectorAll("[data-head]").forEach(h => {
+      const d = h.dataset.head;
+      const old = h.querySelector(".rec"); if (old) old.remove();
+      let el = null;
+      if (isAdmin && online) {
+        el = document.createElement("button"); el.type = "button";
+        el.className = "rec" + (locked[d] ? " done" : "");
+        el.textContent = locked[d] ? "Recibido ✓" : "Recibir";
+        el.title = locked[d] ? "Toca para desbloquear" : "Bloquear este día";
+        el.onclick = () => setLock([d], !locked[d]);
+      } else if (locked[d]) {
+        el = document.createElement("span"); el.className = "rec done"; el.textContent = "Recibido";
+      }
+      if (el) h.appendChild(el);
+    });
+    const allLocked = weekDays().every(d => locked[d]);
+    $("receiveWeek").hidden = !(isAdmin && online);
+    $("receiveWeek").textContent = allLocked ? "Desbloquear la semana" : "Recibir toda la semana";
+    $("copyPrev").hidden = $("clearWeek").hidden = !online || (!isAdmin && allLocked);
     renderSummary();
   }
 
   function blocksOf(date) {
-    const list = (slots[date] || []).slice().sort(), out = [];
-    for (const t of list) {
+    const out = [];
+    for (const t of (slots[date] || []).slice().sort()) {
       const last = out[out.length - 1];
       if (last && last.end === t) last.end = addMin(t, STEP);
       else out.push({ start: t, end: addMin(t, STEP) });
@@ -243,15 +289,13 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
 
   function renderSummary() {
     const ul = $("summary"); ul.innerHTML = "";
-    let any = false;
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(week, i), bl = blocksOf(d);
+    weekDays().forEach((d, i) => {
+      const bl = blocksOf(d);
       const li = document.createElement("li");
       const day = document.createElement("span"); day.className = "day"; day.textContent = DAYS[i];
       const box = document.createElement("span"); box.className = "blocks";
       if (!bl.length) { const n = document.createElement("span"); n.className = "none"; n.textContent = "Sin horas libres"; box.appendChild(n); }
       bl.forEach(b => {
-        any = true;
         const endLabel = b.end === "24:00" ? "00:00" : b.end;
         const nyEnd = b.end === "24:00" ? nyTime(addDays(d, 1), "00:00") : nyTime(d, b.end);
         const ch = document.createElement("span"); ch.className = "chip";
@@ -259,11 +303,9 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
         const et = document.createElement("span"); et.className = "et"; et.textContent = nyTime(d, b.start) + "–" + nyEnd + " " + nyZone(d);
         ch.appendChild(et); box.appendChild(ch);
       });
+      if (locked[d]) { const r = document.createElement("span"); r.className = "none"; r.textContent = "· Recibido"; box.appendChild(r); }
       li.append(day, box); ul.appendChild(li);
-    }
-    if (!any && !canWrite) {
-      ul.insertAdjacentHTML("afterbegin", '<li class="empty">Todavía no hay horas marcadas para esta semana.</li>');
-    }
+    });
   }
 
   function renderWeekLabel() {
@@ -275,12 +317,14 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
       : "Esta semana Nueva York cambia de " + zA + " a " + zB + "; el resumen muestra la hora correcta de cada día.";
   }
 
-  // ---------- Painting interactions ----------
+  // ---------- Marcar con mouse o dedo ----------
   let dragMode = null;
   const grid = $("grid");
+  const lockedTap = d => { if (online && locked[d] && !isAdmin) setStatus("Ese día ya fue recibido y no se puede cambiar", true); };
   grid.addEventListener("pointerdown", e => {
     const c = e.target.closest(".slot");
-    if (!c || !canWrite || e.pointerType !== "mouse") return;
+    if (!c || e.pointerType !== "mouse") return;
+    if (!editable(c.dataset.date)) { lockedTap(c.dataset.date); return; }
     e.preventDefault();
     dragMode = !has(c.dataset.date, c.dataset.time);
     setSlot(c.dataset.date, c.dataset.time, dragMode); paint();
@@ -288,91 +332,113 @@ button.primary { background: var(--free); border-color: var(--free); color: #fff
   grid.addEventListener("pointerover", e => {
     if (dragMode === null) return;
     const c = e.target.closest(".slot");
-    if (c) { setSlot(c.dataset.date, c.dataset.time, dragMode); paint(); }
+    if (c && setSlot(c.dataset.date, c.dataset.time, dragMode)) paint();
   });
   window.addEventListener("pointerup", () => { if (dragMode !== null) { dragMode = null; queueSave(); } });
+  const toggle = c => {
+    if (!editable(c.dataset.date)) { lockedTap(c.dataset.date); return; }
+    setSlot(c.dataset.date, c.dataset.time, !has(c.dataset.date, c.dataset.time)); paint(); queueSave();
+  };
   grid.addEventListener("click", e => {
     const c = e.target.closest(".slot");
-    // El mouse ya pintó en pointerdown; aquí solo toques (dedo o lápiz)
-    if (!c || !canWrite || e.pointerType === "mouse") return;
-    setSlot(c.dataset.date, c.dataset.time, !has(c.dataset.date, c.dataset.time)); paint(); queueSave();
+    if (c && e.pointerType !== "mouse") toggle(c);   // el mouse ya pintó en pointerdown
   });
   grid.addEventListener("keydown", e => {
     const c = e.target.closest(".slot");
-    if (!c || !canWrite || (e.key !== "Enter" && e.key !== " ")) return;
-    e.preventDefault();
-    setSlot(c.dataset.date, c.dataset.time, !has(c.dataset.date, c.dataset.time)); paint(); queueSave();
+    if (c && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggle(c); }
   });
 
-  // ---------- Guardado: en este navegador y dentro del link ----------
-  const LS = "horas-libres:";
-  const lsGet = k => { try { return JSON.parse(localStorage.getItem(LS + k) || "null"); } catch (e) { return null; } };
-  const lsSet = (k, v) => { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch (e) {} };
-
-  // Semana -> texto corto: 7 días x 36 casillas = 252 bits en base64url
-  function encode(w, sl) {
-    const bytes = new Uint8Array(Math.ceil(7 * times.length / 8));
-    for (let i = 0; i < 7; i++) times.forEach((t, r) => {
-      if ((sl[addDays(w, i)] || []).includes(t)) { const b = i * times.length + r; bytes[b >> 3] |= 1 << (b & 7); }
-    });
-    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-  function decode(w, str) {
-    const bin = atob(str.replace(/-/g, "+").replace(/_/g, "/")), out = {};
-    for (let i = 0; i < 7; i++) times.forEach((t, r) => {
-      const b = i * times.length + r;
-      if (b >> 3 < bin.length && (bin.charCodeAt(b >> 3) >> (b & 7)) & 1) (out[addDays(w, i)] = out[addDays(w, i)] || []).push(t);
-    });
-    return out;
-  }
-  const shareUrl = () => location.origin + location.pathname + "#" + week + "." + encode(week, slots);
-
+  // ---------- Guardado en Firebase ----------
+  const dayRef = d => db.collection("days").doc(d);
   function queueSave() {
-    lsSet(week, slots);
-    history.replaceState(null, "", "#" + week + "." + encode(week, slots));
-    setStatus("Guardado en este navegador. Toca “Copiar link” para enviarlo.");
+    if (!dirty.size) return;
+    setStatus("Guardando…");
+    clearTimeout(saveTimer); saveTimer = setTimeout(save, 500);
+  }
+  async function save() {
+    const days = [...dirty]; dirty.clear();
+    try {
+      await Promise.all(days.map(d => dayRef(d).set({ slots: slots[d] || [], updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })));
+      if (!dirty.size) setStatus("Guardado");
+    } catch (err) {
+      setStatus(err && err.code === "permission-denied" ? "Ese día ya fue recibido y no se puede cambiar" : "No se pudo guardar. Revisa tu conexión.", true);
+    }
+  }
+  async function setLock(days, on) {
+    try {
+      await Promise.all(days.map(d => dayRef(d).set({ slots: slots[d] || [], locked: on, lockedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })));
+      setStatus(on ? "Marcado como recibido" : "Desbloqueado");
+    } catch (err) { setStatus("No se pudo cambiar el estado: " + (err.code || err.message), true); }
+  }
+  function subscribe() {
+    if (unsub) unsub();
+    if (!db) return;
+    const id = firebase.firestore.FieldPath.documentId();
+    const w = week;
+    unsub = db.collection("days").where(id, ">=", w).where(id, "<=", addDays(w, 6)).onSnapshot(snap => {
+      if (w !== week) return;
+      const nextSlots = {}, nextLocked = {};
+      snap.forEach(doc => { const v = doc.data(); nextSlots[doc.id] = v.slots || []; if (v.locked) nextLocked[doc.id] = true; });
+      for (const d of dirty) nextSlots[d] = slots[d];       // no pisar lo que aún se está guardando
+      if (dragMode !== null) return;
+      slots = nextSlots; locked = nextLocked;
+      paint();
+      if (!dirty.size && $("status").textContent === "Cargando…") setStatus("Al día");
+    }, err => setStatus("No se pudo leer: " + (err.code || err.message), true));
   }
 
-  function loadWeek() {
-    slots = lsGet(week) || {};
-    paint();
-    setStatus(Object.keys(slots).length ? "Guardado en este navegador" : "Marca tus horas libres");
-  }
-
-  function goWeek(w) {
-    week = w;
-    renderWeekLabel(); renderGrid(); loadWeek();
-    history.replaceState(null, "", "#" + week + "." + encode(week, slots));
+  async function goWeek(w) {
+    if (dirty.size) { clearTimeout(saveTimer); await save(); }
+    week = w; slots = {}; locked = {};
+    renderWeekLabel(); renderGrid(); setStatus("Cargando…");
+    subscribe();
   }
 
   $("prev").onclick = () => goWeek(addDays(week, -7));
   $("next").onclick = () => goWeek(addDays(week, 7));
   $("thisWeek").onclick = () => goWeek(mondayOf(todayVE()));
-  $("copyPrev").onclick = () => {
-    const prev = lsGet(addDays(week, -7)) || {}, next = {};
-    for (let i = 0; i < 7; i++) { const s = prev[addDays(week, i - 7)]; if (s && s.length) next[addDays(week, i)] = s.slice(); }
-    if (!Object.keys(next).length) { setStatus("La semana anterior no tiene horas marcadas en este navegador", true); return; }
-    slots = next; paint(); queueSave();
+  $("copyPrev").onclick = async () => {
+    const id = firebase.firestore.FieldPath.documentId(), pw = addDays(week, -7);
+    const snap = await db.collection("days").where(id, ">=", pw).where(id, "<=", addDays(pw, 6)).get().catch(() => null);
+    if (!snap || snap.empty) { setStatus("La semana anterior no tiene horas marcadas", true); return; }
+    let changed = 0;
+    snap.forEach(doc => {
+      const d = addDays(doc.id, 7);
+      if (editable(d) && (doc.data().slots || []).length) { slots[d] = doc.data().slots.slice(); dirty.add(d); changed++; }
+    });
+    paint();
+    changed ? queueSave() : setStatus("No hay nada que copiar a los días abiertos", true);
   };
   $("clearWeek").onclick = () => { $("confirmClear").hidden = false; setTimeout(() => $("confirmClear").hidden = true, 5000); };
-  $("confirmClear").onclick = () => { $("confirmClear").hidden = true; slots = {}; paint(); queueSave(); };
-  $("copyLink").onclick = async () => {
-    const url = shareUrl();
-    try { await navigator.clipboard.writeText(url); setStatus("Link copiado. Pégalo en WhatsApp o donde quieras."); }
-    catch (e) { const box = $("linkBox"); box.hidden = false; box.value = url; box.select(); setStatus("Copia el link de la caja", true); }
+  $("confirmClear").onclick = () => {
+    $("confirmClear").hidden = true;
+    weekDays().forEach(d => { if (editable(d) && (slots[d] || []).length) { slots[d] = []; dirty.add(d); } });
+    paint(); queueSave();
   };
+  $("receiveWeek").onclick = () => { const all = weekDays().every(d => locked[d]); setLock(weekDays(), !all); };
 
   // ---------- Arranque ----------
-  const m = /^#(\d{4}-\d{2}-\d{2})\.([A-Za-z0-9_-]*)$/.exec(location.hash);
-  if (m) {
-    week = mondayOf(m[1]);
-    try { slots = decode(week, m[2]); } catch (e) { slots = {}; }
-    lsSet(week, slots);
-    renderWeekLabel(); renderGrid();
-    setStatus("Semana cargada desde el link");
-  } else {
-    renderWeekLabel(); renderGrid(); loadWeek();
+  renderWeekLabel(); renderGrid();
+  if (!FIREBASE_CONFIG || !window.firebase) {
+    $("banner").hidden = false;
+    $("banner").textContent = "Falta conectar la base de datos de Firebase. Mientras tanto la página no guarda nada.";
+    setStatus("Sin conexión", true); $("admin").hidden = true;
+    return;
   }
+  firebase.initializeApp(FIREBASE_CONFIG);
+  db = firebase.firestore();
+  online = true;
+  paint();
+  subscribe();
+  const auth = firebase.auth();
+  $("signIn").onclick = () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(e => setStatus("No se pudo entrar: " + (e.code || e.message), true));
+  $("signOut").onclick = () => auth.signOut();
+  auth.onAuthStateChanged(u => {
+    isAdmin = !!(u && ADMIN_EMAIL && u.email && u.email.toLowerCase() === ADMIN_EMAIL.toLowerCase());
+    $("signIn").hidden = !!u; $("signOut").hidden = !u;
+    $("adminText").textContent = u ? (isAdmin ? "Entraste como " + u.email + ". Puedes marcar días como recibidos." : u.email + " no puede marcar días como recibidos.") : "";
+    paint();
+  });
 })();
 </script>
 </body>

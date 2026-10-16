@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Solo esta cuenta de Google puede marcar o quitar "Recibido".
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() == 'TU_CORREO@gmail.com';
+    }
+    function okShape() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['slots', 'locked', 'updatedAt', 'lockedAt'])
+        && (!('slots' in d) || (d.slots is list && d.slots.size() <= 24));
+    }
+    match /days/{day} {
+      allow read: if true;
+      allow create: if okShape() && (isAdmin() || request.resource.data.get('locked', false) == false);
+      allow update: if okShape() && (isAdmin()
+        || (resource.data.get('locked', false) == false
+            && request.resource.data.get('locked', false) == false));
+      allow delete: if isAdmin();
+    }
+  }
+}
