@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="es">
+<head>
+<title>Horas libres</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+body{margin:0}
+/* Layout: one column; header with week switcher, a week grid with two time rails (Caracas / Nueva York), then a plain summary list. */
+:root {
+  --bg: #f5f7f6;
+  --surface: #ffffff;
+  --ink: #18221f;
+  --muted: #5d6b67;
+  --line: #dde4e1;
+  --line-soft: #ecf0ee;
+  --free: #1f9d74;
+  --free-soft: #d4f1e6;
+  --free-ink: #0d5b41;
+  --accent: #2c4bd1;
+  --warn: #9a5b00;
+  --font-ui: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111715; --surface: #18201d; --ink: #e6eeeb; --muted: #97a6a1;
+    --line: #2a3531; --line-soft: #202a26; --free: #36c497; --free-soft: #17402f;
+    --free-ink: #a6f0d3; --accent: #8aa2ff; --warn: #f0b45c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111715; --surface: #18201d; --ink: #e6eeeb; --muted: #97a6a1;
+  --line: #2a3531; --line-soft: #202a26; --free: #36c497; --free-soft: #17402f;
+  --free-ink: #a6f0d3; --accent: #8aa2ff; --warn: #f0b45c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; }
+h1 { margin: 0; font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; }
+.sub { margin: 4px 0 0; color: var(--muted); max-width: 60ch; line-height: 1.5; }
+.weeknav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.weeknav .label { font-weight: 700; min-width: 13ch; text-align: center; font-variant-numeric: tabular-nums; }
+button {
+  font: inherit; font-weight: 600; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .5; cursor: default; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.toolbar .left { display: flex; gap: 8px; flex-wrap: wrap; }
+button.primary { background: var(--free); border-color: var(--free); color: #fff; }
+#linkBox { width: 100%; font: inherit; font-family: var(--font-mono); font-size: .8rem; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.status { color: var(--muted); font-size: .85rem; }
+.status.warn { color: var(--warn); }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: .85rem; align-items: center; }
+.sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; background: var(--free); }
+.gridbox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.grid {
+  display: grid; grid-template-columns: 58px 58px repeat(7, minmax(62px, 1fr));
+  min-width: 600px; user-select: none; -webkit-user-select: none;
+}
+.hcell {
+  position: sticky; top: 0; z-index: 2; background: var(--surface);
+  border-bottom: 1px solid var(--line); padding: 8px 4px; text-align: center; font-size: .8rem;
+}
+.hcell .d { font-weight: 700; font-size: .9rem; }
+.hcell .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.hcell.today .d { color: var(--accent); }
+.tz { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; line-height: 1.2; }
+.time {
+  font-family: var(--font-mono); font-size: .72rem; color: var(--muted); text-align: right;
+  padding: 0 6px; height: 22px; line-height: 22px; border-right: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.time.half { color: transparent; }
+.time.et { color: var(--accent); opacity: .85; }
+.time.et.half { color: transparent; }
+.slot { height: 22px; border-right: 1px solid var(--line-soft); border-bottom: 1px dashed var(--line-soft); cursor: pointer; }
+.slot.hour { border-bottom: 1px solid var(--line-soft); }
+.slot:hover { background: var(--line-soft); }
+.slot.on { background: var(--free); border-bottom-color: var(--free); }
+.slot.on.end { border-bottom-color: var(--line-soft); }
+.slot.ro { cursor: default; }
+.slot.ro:hover { background: transparent; }
+.slot.on.ro:hover { background: var(--free); }
+.summary { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.summary h2 { margin: 0 0 12px; font-size: 1rem; }
+.summary ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.summary li { display: grid; grid-template-columns: 9ch 1fr; gap: 12px; align-items: baseline; }
+.summary .day { font-weight: 700; }
+.blocks { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.chip {
+  background: var(--free-soft); color: var(--free-ink); border-radius: 999px; padding: 3px 10px;
+  font-size: .82rem; font-variant-numeric: tabular-nums;
+}
+.chip .et { color: var(--accent); margin-left: 6px; }
+.none { color: var(--muted); font-size: .85rem; }
+.empty { color: var(--muted); }
+.note { color: var(--muted); font-size: .82rem; line-height: 1.5; }
+@media (max-width: 520px) { h1 { font-size: 1.5rem; } .summary li { grid-template-columns: 1fr; gap: 4px; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Horas libres</h1>
+      <p class="sub">Toca o arrastra sobre la cuadrícula para marcar tus horas libres. Las horas están en Venezuela (UTC−4) y al lado se ve su equivalente en Nueva York. Cuando termines, toca “Copiar link” y envíalo.</p>
+    </div>
+    <div class="weeknav">
+      <button id="prev" type="button" aria-label="Semana anterior">←</button>
+      <span class="label" id="weekLabel">Semana</span>
+      <button id="next" type="button" aria-label="Semana siguiente">→</button>
+      <button id="thisWeek" type="button">Esta semana</button>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="left">
+      <button id="copyPrev" type="button">Copiar semana anterior</button>
+      <button id="clearWeek" type="button">Borrar semana</button>
+      <button id="confirmClear" type="button" hidden>Sí, borrar todo</button>
+      <button id="copyLink" type="button" class="primary">Copiar link</button>
+    </div>
+    <div class="legend"><span><span class="sw"></span>Libre</span><span class="status" id="status"></span></div>
+  </div>
+
+  <input id="linkBox" type="text" readonly hidden aria-label="Link de la semana">
+
+  <div class="gridbox"><div class="grid" id="grid"></div></div>
+
+  <section class="summary">
+    <h2>Resumen de la semana</h2>
+    <ul id="summary"></ul>
+  </section>
+
+  <p class="note" id="tzNote"></p>
+</div>
+
+<script>
+(() => {
+  const START_H = 6, END_H = 24;            // horas mostradas (hora de Caracas)
+  const STEP = 30;                          // minutos por casilla
+  const VE_OFFSET = -4;                     // Venezuela: UTC-4 fijo, sin horario de verano
+  const NY = "America/New_York";
+  const DAYS = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
+  const DAYS_SHORT = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+  const MONTHS = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2, "0");
+  const times = [];
+  for (let m = START_H * 60; m < END_H * 60; m += STEP) times.push(pad(Math.floor(m / 60)) + ":" + pad(m % 60));
+
+  // Fechas como "YYYY-MM-DD" en hora de Caracas
+  const iso = d => d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  const parse = s => { const [y, m, d] = s.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+  const addDays = (s, n) => { const d = parse(s); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
+  const todayVE = () => iso(new Date(Date.now() + VE_OFFSET * 3600e3));
+  const mondayOf = s => { const d = parse(s); const wd = (d.getUTCDay() + 6) % 7; return addDays(s, -wd); };
+
+  // Instante UTC de una hora de Caracas
+  const instant = (date, hhmm) => { const d = parse(date); const [h, m] = hhmm.split(":").map(Number); return new Date(d.getTime() + ((h - VE_OFFSET) * 60 + m) * 60e3); };
+  const nyFmt = new Intl.DateTimeFormat("en-US", { timeZone: NY, hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short" });
+  const nyZoneFmt = new Intl.DateTimeFormat("en-US", { timeZone: NY, timeZoneName: "short" });
+  const nyParts = dt => Object.fromEntries(nyFmt.formatToParts(dt).map(p => [p.type, p.value]));
+  const nyTime = (date, hhmm) => { const p = nyParts(instant(date, hhmm)); return p.hour + ":" + p.minute; };
+  const nyZone = date => (nyZoneFmt.formatToParts(instant(date, "12:00")).find(p => p.type === "timeZoneName") || {}).value || "ET";
+  const addMin = (hhmm, n) => { const [h, m] = hhmm.split(":").map(Number); const t = h * 60 + m + n; return pad(Math.floor(t / 60)) + ":" + pad(t % 60); };
+
+  let week = mondayOf(todayVE());
+  let slots = {};             // { "YYYY-MM-DD": ["09:00", ...] }
+  const canWrite = true;
+
+  const setStatus = (t, warn) => { const el = $("status"); el.textContent = t; el.classList.toggle("warn", !!warn); };
+  const has = (date, t) => (slots[date] || []).includes(t);
+  const setSlot = (date, t, on) => {
+    const list = new Set(slots[date] || []);
+    on ? list.add(t) : list.delete(t);
+    slots[date] = [...list].sort();
+    if (!slots[date].length) delete slots[date];
+  };
+
+  // ---------- Render ----------
+  function renderGrid() {
+    const g = $("grid"); g.innerHTML = "";
+    const z = nyZone(addDays(week, 3));
+    const head = (html, cls) => { const c = document.createElement("div"); c.className = "hcell " + (cls || ""); c.innerHTML = html; g.appendChild(c); };
+    head('<div class="tz">Vzla<br>UTC−4</div>');
+    head('<div class="tz" style="color:var(--accent)">NY<br>' + z + "</div>");
+    const today = todayVE();
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(week, i), pd = parse(d);
+      head('<div class="d">' + DAYS_SHORT[i] + '</div><div class="n">' + pd.getUTCDate() + " " + MONTHS[pd.getUTCMonth()] + "</div>", d === today ? "today" : "");
+    }
+    times.forEach((t, r) => {
+      const half = !t.endsWith(":00");
+      const a = document.createElement("div"); a.className = "time" + (half ? " half" : ""); a.textContent = t; g.appendChild(a);
+      const b = document.createElement("div"); b.className = "time et" + (half ? " half" : ""); b.textContent = nyTime(addDays(week, 3), t); g.appendChild(b);
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(week, i);
+        const c = document.createElement("div");
+        c.className = "slot" + (half ? " hour" : "") + (canWrite ? "" : " ro");
+        c.dataset.date = d; c.dataset.time = t; c.tabIndex = canWrite ? 0 : -1;
+        c.setAttribute("role", "button");
+        c.setAttribute("aria-label", DAYS[i] + " " + t);
+        g.appendChild(c);
+      }
+    });
+    paint();
+  }
+
+  function paint() {
+    document.querySelectorAll(".slot").forEach(c => {
+      const on = has(c.dataset.date, c.dataset.time);
+      c.classList.toggle("on", on);
+      c.classList.toggle("end", on && !has(c.dataset.date, addMin(c.dataset.time, STEP)));
+      c.setAttribute("aria-pressed", on);
+    });
+    renderSummary();
+  }
+
+  function blocksOf(date) {
+    const list = (slots[date] || []).slice().sort(), out = [];
+    for (const t of list) {
+      const last = out[out.length - 1];
+      if (last && last.end === t) last.end = addMin(t, STEP);
+      else out.push({ start: t, end: addMin(t, STEP) });
+    }
+    return out;
+  }
+
+  function renderSummary() {
+    const ul = $("summary"); ul.innerHTML = "";
+    let any = false;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(week, i), bl = blocksOf(d);
+      const li = document.createElement("li");
+      const day = document.createElement("span"); day.className = "day"; day.textContent = DAYS[i];
+      const box = document.createElement("span"); box.className = "blocks";
+      if (!bl.length) { const n = document.createElement("span"); n.className = "none"; n.textContent = "Sin horas libres"; box.appendChild(n); }
+      bl.forEach(b => {
+        any = true;
+        const endLabel = b.end === "24:00" ? "00:00" : b.end;
+        const nyEnd = b.end === "24:00" ? nyTime(addDays(d, 1), "00:00") : nyTime(d, b.end);
+        const ch = document.createElement("span"); ch.className = "chip";
+        ch.textContent = b.start + "–" + endLabel + " Vzla";
+        const et = document.createElement("span"); et.className = "et"; et.textContent = nyTime(d, b.start) + "–" + nyEnd + " " + nyZone(d);
+        ch.appendChild(et); box.appendChild(ch);
+      });
+      li.append(day, box); ul.appendChild(li);
+    }
+    if (!any && !canWrite) {
+      ul.insertAdjacentHTML("afterbegin", '<li class="empty">Todavía no hay horas marcadas para esta semana.</li>');
+    }
+  }
+
+  function renderWeekLabel() {
+    const a = parse(week), b = parse(addDays(week, 6));
+    $("weekLabel").textContent = a.getUTCDate() + " " + MONTHS[a.getUTCMonth()] + " – " + b.getUTCDate() + " " + MONTHS[b.getUTCMonth()];
+    const zA = nyZone(week), zB = nyZone(addDays(week, 6));
+    $("tzNote").textContent = zA === zB
+      ? "Esta semana Nueva York está en " + zA + (zA === "EDT" ? ", la misma hora que Venezuela." : ", una hora menos que Venezuela.")
+      : "Esta semana Nueva York cambia de " + zA + " a " + zB + "; el resumen muestra la hora correcta de cada día.";
+  }
+
+  // ---------- Painting interactions ----------
+  let dragMode = null;
+  const grid = $("grid");
+  grid.addEventListener("pointerdown", e => {
+    const c = e.target.closest(".slot");
+    if (!c || !canWrite || e.pointerType !== "mouse") return;
+    e.preventDefault();
+    dragMode = !has(c.dataset.date, c.dataset.time);
+    setSlot(c.dataset.date, c.dataset.time, dragMode); paint();
+  });
+  grid.addEventListener("pointerover", e => {
+    if (dragMode === null) return;
+    const c = e.target.closest(".slot");
+    if (c) { setSlot(c.dataset.date, c.dataset.time, dragMode); paint(); }
+  });
+  window.addEventListener("pointerup", () => { if (dragMode !== null) { dragMode = null; queueSave(); } });
+  grid.addEventListener("click", e => {
+    const c = e.target.closest(".slot");
+    // El mouse ya pintó en pointerdown; aquí solo toques (dedo o lápiz)
+    if (!c || !canWrite || e.pointerType === "mouse") return;
+    setSlot(c.dataset.date, c.dataset.time, !has(c.dataset.date, c.dataset.time)); paint(); queueSave();
+  });
+  grid.addEventListener("keydown", e => {
+    const c = e.target.closest(".slot");
+    if (!c || !canWrite || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    setSlot(c.dataset.date, c.dataset.time, !has(c.dataset.date, c.dataset.time)); paint(); queueSave();
+  });
+
+  // ---------- Guardado: en este navegador y dentro del link ----------
+  const LS = "horas-libres:";
+  const lsGet = k => { try { return JSON.parse(localStorage.getItem(LS + k) || "null"); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch (e) {} };
+
+  // Semana -> texto corto: 7 días x 36 casillas = 252 bits en base64url
+  function encode(w, sl) {
+    const bytes = new Uint8Array(Math.ceil(7 * times.length / 8));
+    for (let i = 0; i < 7; i++) times.forEach((t, r) => {
+      if ((sl[addDays(w, i)] || []).includes(t)) { const b = i * times.length + r; bytes[b >> 3] |= 1 << (b & 7); }
+    });
+    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function decode(w, str) {
+    const bin = atob(str.replace(/-/g, "+").replace(/_/g, "/")), out = {};
+    for (let i = 0; i < 7; i++) times.forEach((t, r) => {
+      const b = i * times.length + r;
+      if (b >> 3 < bin.length && (bin.charCodeAt(b >> 3) >> (b & 7)) & 1) (out[addDays(w, i)] = out[addDays(w, i)] || []).push(t);
+    });
+    return out;
+  }
+  const shareUrl = () => location.origin + location.pathname + "#" + week + "." + encode(week, slots);
+
+  function queueSave() {
+    lsSet(week, slots);
+    history.replaceState(null, "", "#" + week + "." + encode(week, slots));
+    setStatus("Guardado en este navegador. Toca “Copiar link” para enviarlo.");
+  }
+
+  function loadWeek() {
+    slots = lsGet(week) || {};
+    paint();
+    setStatus(Object.keys(slots).length ? "Guardado en este navegador" : "Marca tus horas libres");
+  }
+
+  function goWeek(w) {
+    week = w;
+    renderWeekLabel(); renderGrid(); loadWeek();
+    history.replaceState(null, "", "#" + week + "." + encode(week, slots));
+  }
+
+  $("prev").onclick = () => goWeek(addDays(week, -7));
+  $("next").onclick = () => goWeek(addDays(week, 7));
+  $("thisWeek").onclick = () => goWeek(mondayOf(todayVE()));
+  $("copyPrev").onclick = () => {
+    const prev = lsGet(addDays(week, -7)) || {}, next = {};
+    for (let i = 0; i < 7; i++) { const s = prev[addDays(week, i - 7)]; if (s && s.length) next[addDays(week, i)] = s.slice(); }
+    if (!Object.keys(next).length) { setStatus("La semana anterior no tiene horas marcadas en este navegador", true); return; }
+    slots = next; paint(); queueSave();
+  };
+  $("clearWeek").onclick = () => { $("confirmClear").hidden = false; setTimeout(() => $("confirmClear").hidden = true, 5000); };
+  $("confirmClear").onclick = () => { $("confirmClear").hidden = true; slots = {}; paint(); queueSave(); };
+  $("copyLink").onclick = async () => {
+    const url = shareUrl();
+    try { await navigator.clipboard.writeText(url); setStatus("Link copiado. Pégalo en WhatsApp o donde quieras."); }
+    catch (e) { const box = $("linkBox"); box.hidden = false; box.value = url; box.select(); setStatus("Copia el link de la caja", true); }
+  };
+
+  // ---------- Arranque ----------
+  const m = /^#(\d{4}-\d{2}-\d{2})\.([A-Za-z0-9_-]*)$/.exec(location.hash);
+  if (m) {
+    week = mondayOf(m[1]);
+    try { slots = decode(week, m[2]); } catch (e) { slots = {}; }
+    lsSet(week, slots);
+    renderWeekLabel(); renderGrid();
+    setStatus("Semana cargada desde el link");
+  } else {
+    renderWeekLabel(); renderGrid(); loadWeek();
+  }
+})();
+</script>
+</body>
+</html>
